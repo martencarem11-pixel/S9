@@ -14,7 +14,8 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import android.view.Surface
-import android.view.TextureView
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -34,20 +35,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -57,10 +58,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -70,10 +69,7 @@ import androidx.core.content.ContextCompat
 
 /**
  * Live Camera background feed powered by Android Camera2.
- * Supports:
- * - Single full-screen camera view for AR
- * - Dual stereoscopic side-by-side (SBS) camera view for MR ("Double Camera")
- * - Dynamic fallback with spatial environment if camera hardware is unavailable
+ * Includes complete lifecycle management to prevent abandoned buffer queues.
  */
 @Composable
 fun CameraFeedView(
@@ -107,12 +103,11 @@ fun CameraFeedView(
             .testTag("camera_feed_container")
     ) {
         if (hasCameraPermission) {
-            if (isMRMode) {
-                // MR Mode: Stereoscopic Double Camera View (Side-by-Side)
-                DualCameraPreview(modifier = Modifier.fillMaxSize())
-            } else {
-                // AR Mode: Single Full-screen Camera View
-                SingleCameraPreview(modifier = Modifier.fillMaxSize())
+            key(isMRMode) {
+                CameraSurfacePreview(
+                    isMR = isMRMode,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
         } else {
             // Permission request overlay with futuristic spatial canvas
@@ -128,192 +123,385 @@ fun CameraFeedView(
 }
 
 /**
- * Single full-screen Camera2 Preview for standard AR mode.
+ * Lifecycle-safe Camera2 Preview View.
+ * Supports single camera preview for AR mode and double camera preview (Left Eye & Right Eye) for MR mode.
  */
 @Composable
-fun SingleCameraPreview(modifier: Modifier = Modifier) {
+fun CameraSurfacePreview(
+    isMR: Boolean,
+    modifier: Modifier = Modifier
+) {
     val context = LocalContext.current
+    val controller = remember(context, isMR) { CameraPreviewController(context) }
 
-    DisposableEffect(Unit) {
-        val handlerThread = HandlerThread("Camera2SingleThread").apply { start() }
-        val handler = Handler(handlerThread.looper)
-        var cameraDevice: CameraDevice? = null
-        var captureSession: CameraCaptureSession? = null
-
+    DisposableEffect(controller) {
         onDispose {
-            try {
-                captureSession?.close()
-                cameraDevice?.close()
-                handlerThread.quitSafely()
-            } catch (e: Exception) {
-                Log.e("CameraPreview", "Error closing camera", e)
-            }
+            controller.stop()
         }
     }
 
-    AndroidView(
-        factory = { ctx ->
-            TextureView(ctx).apply {
-                surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                    override fun onSurfaceTextureAvailable(st: SurfaceTexture, width: Int, height: Int) {
-                        startCameraPreview(ctx, listOf(Surface(st)))
-                    }
-                    override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, width: Int, height: Int) {}
-                    override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean = true
-                    override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
+    Box(modifier = modifier.fillMaxSize()) {
+        if (isMR) {
+            // Dual Camera Viewports: Left Eye & Right Eye side-by-side for stereoscopic MR
+            Row(modifier = Modifier.fillMaxSize()) {
+                // Left Eye Camera
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .testTag("camera_preview_left")
+                ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            SurfaceView(ctx).apply {
+                                holder.addCallback(object : SurfaceHolder.Callback {
+                                    override fun surfaceCreated(holder: SurfaceHolder) {
+                                        controller.addSurface(holder.surface)
+                                    }
+
+                                    override fun surfaceChanged(
+                                        holder: SurfaceHolder,
+                                        format: Int,
+                                        width: Int,
+                                        height: Int
+                                    ) {}
+
+                                    override fun surfaceDestroyed(holder: SurfaceHolder) {
+                                        controller.removeSurface(holder.surface)
+                                    }
+                                })
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                // Center Divider
+                Box(
+                    modifier = Modifier
+                        .width(2.dp)
+                        .fillMaxHeight()
+                        .background(Color(0xFF00E5FF).copy(alpha = 0.4f))
+                )
+
+                // Right Eye Camera
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .testTag("camera_preview_right")
+                ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            SurfaceView(ctx).apply {
+                                holder.addCallback(object : SurfaceHolder.Callback {
+                                    override fun surfaceCreated(holder: SurfaceHolder) {
+                                        controller.addSurface(holder.surface)
+                                    }
+
+                                    override fun surfaceChanged(
+                                        holder: SurfaceHolder,
+                                        format: Int,
+                                        width: Int,
+                                        height: Int
+                                    ) {}
+
+                                    override fun surfaceDestroyed(holder: SurfaceHolder) {
+                                        controller.removeSurface(holder.surface)
+                                    }
+                                })
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
             }
-        },
-        modifier = modifier.fillMaxSize()
-    )
-}
 
-/**
- * Stereoscopic Dual Camera2 Preview for MR mode ("Double Camera").
- * Left Eye and Right Eye side-by-side feeds from the camera sensor.
- */
-@Composable
-fun DualCameraPreview(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    var leftSurfaceTexture by remember { mutableStateOf<SurfaceTexture?>(null) }
-    var rightSurfaceTexture by remember { mutableStateOf<SurfaceTexture?>(null) }
-
-    // When both textures are available, bind them to Camera2 capture session
-    LaunchedEffect(leftSurfaceTexture, rightSurfaceTexture) {
-        val left = leftSurfaceTexture
-        val right = rightSurfaceTexture
-        if (left != null && right != null) {
-            val surfaces = listOf(Surface(left), Surface(right))
-            startCameraPreview(context, surfaces)
-        } else if (left != null) {
-            startCameraPreview(context, listOf(Surface(left)))
-        }
-    }
-
-    Row(modifier = modifier.fillMaxSize()) {
-        // Left Eye Camera Feed
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-        ) {
+            // Ocular framing overlay
+            MRStereoscopicCameraOverlay(
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            // Single full-screen Camera Viewport for AR mode
             AndroidView(
                 factory = { ctx ->
-                    TextureView(ctx).apply {
-                        surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                            override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
-                                leftSurfaceTexture = st
+                    SurfaceView(ctx).apply {
+                        holder.addCallback(object : SurfaceHolder.Callback {
+                            override fun surfaceCreated(holder: SurfaceHolder) {
+                                controller.addSurface(holder.surface)
                             }
-                            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
-                            override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
-                                leftSurfaceTexture = null
-                                return true
+
+                            override fun surfaceChanged(
+                                holder: SurfaceHolder,
+                                format: Int,
+                                width: Int,
+                                height: Int
+                            ) {}
+
+                            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                                controller.removeSurface(holder.surface)
                             }
-                            override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
-                        }
+                        })
                     }
                 },
                 modifier = Modifier.fillMaxSize()
             )
         }
+    }
+}
 
-        // Center stereoscopic divider line
+/**
+ * Controller that safely coordinates Camera2 opening, multi-surface capture session, and synchronous teardown.
+ */
+class CameraPreviewController(private val context: Context) {
+    private var handlerThread: HandlerThread? = null
+    private var handler: Handler? = null
+    private var cameraDevice: CameraDevice? = null
+    private var captureSession: CameraCaptureSession? = null
+    private val activeSurfaces = java.util.Collections.synchronizedList(mutableListOf<Surface>())
+    @Volatile
+    private var isStopped = false
+    private var pendingReconfigure: Runnable? = null
+
+    @SuppressLint("MissingPermission")
+    fun addSurface(surface: Surface) {
+        if (!surface.isValid) return
+        synchronized(activeSurfaces) {
+            if (!activeSurfaces.contains(surface)) {
+                activeSurfaces.add(surface)
+            }
+        }
+        val bgHandler = handler
+        if (bgHandler != null && cameraDevice != null) {
+            pendingReconfigure?.let { bgHandler.removeCallbacks(it) }
+            val run = Runnable { startOrReconfigureSession() }
+            pendingReconfigure = run
+            bgHandler.postDelayed(run, 50L)
+        } else if (handler == null) {
+            initCamera()
+        }
+    }
+
+    fun removeSurface(surface: Surface) {
+        synchronized(activeSurfaces) {
+            activeSurfaces.remove(surface)
+        }
+        val count = synchronized(activeSurfaces) { activeSurfaces.size }
+        if (count == 0) {
+            stop()
+        } else {
+            val bgHandler = handler
+            if (bgHandler != null && cameraDevice != null) {
+                pendingReconfigure?.let { bgHandler.removeCallbacks(it) }
+                val run = Runnable { startOrReconfigureSession() }
+                pendingReconfigure = run
+                bgHandler.postDelayed(run, 50L)
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun initCamera() {
+        stop()
+        isStopped = false
+
+        val thread = HandlerThread("CamPreviewThread_${System.currentTimeMillis()}").apply { start() }
+        handlerThread = thread
+        val bgHandler = Handler(thread.looper)
+        handler = bgHandler
+
+        try {
+            val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return
+            val cameraIdList = cameraManager.cameraIdList
+            if (cameraIdList.isEmpty()) return
+
+            val cameraId = cameraIdList.firstOrNull { id ->
+                val characteristics = cameraManager.getCameraCharacteristics(id)
+                val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
+                facing == CameraCharacteristics.LENS_FACING_BACK
+            } ?: cameraIdList.first()
+
+            cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
+                override fun onOpened(camera: CameraDevice) {
+                    if (isStopped) {
+                        camera.close()
+                        return
+                    }
+                    cameraDevice = camera
+                    startOrReconfigureSession()
+                }
+
+                override fun onDisconnected(camera: CameraDevice) {
+                    camera.close()
+                    if (cameraDevice == camera) cameraDevice = null
+                }
+
+                override fun onError(camera: CameraDevice, error: Int) {
+                    camera.close()
+                    if (cameraDevice == camera) cameraDevice = null
+                }
+            }, bgHandler)
+        } catch (e: Exception) {
+            Log.e("CameraPreview", "Camera setup error", e)
+        }
+    }
+
+    private fun startOrReconfigureSession() {
+        val camera = cameraDevice ?: return
+        val bgHandler = handler ?: return
+        if (isStopped) return
+
+        val validSurfaces = synchronized(activeSurfaces) { activeSurfaces.filter { it.isValid } }
+        if (validSurfaces.isEmpty()) return
+
+        try {
+            captureSession?.stopRepeating()
+            captureSession?.close()
+            captureSession = null
+
+            val previewRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+            for (s in validSurfaces) {
+                previewRequestBuilder.addTarget(s)
+            }
+            previewRequestBuilder.set(
+                CaptureRequest.CONTROL_AF_MODE,
+                CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+            )
+
+            camera.createCaptureSession(
+                validSurfaces,
+                object : CameraCaptureSession.StateCallback() {
+                    override fun onConfigured(session: CameraCaptureSession) {
+                        if (isStopped) {
+                            session.close()
+                            return
+                        }
+                        captureSession = session
+                        try {
+                            session.setRepeatingRequest(previewRequestBuilder.build(), null, bgHandler)
+                        } catch (e: Exception) {
+                            Log.w("CameraPreview", "Capture request stopped or error", e)
+                        }
+                    }
+
+                    override fun onConfigureFailed(session: CameraCaptureSession) {
+                        session.close()
+                        if (captureSession == session) captureSession = null
+
+                        // Resilient fallback: if multiple surfaces failed on this driver, try single primary surface
+                        val fallbackSurface = synchronized(activeSurfaces) { activeSurfaces.firstOrNull { it.isValid } }
+                        if (validSurfaces.size > 1 && fallbackSurface != null && !isStopped) {
+                            try {
+                                val singleReq = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                                singleReq.addTarget(fallbackSurface)
+                                camera.createCaptureSession(
+                                    listOf(fallbackSurface),
+                                    object : CameraCaptureSession.StateCallback() {
+                                        override fun onConfigured(s: CameraCaptureSession) {
+                                            captureSession = s
+                                            s.setRepeatingRequest(singleReq.build(), null, bgHandler)
+                                        }
+
+                                        override fun onConfigureFailed(s: CameraCaptureSession) {
+                                            s.close()
+                                        }
+                                    },
+                                    bgHandler
+                                )
+                            } catch (e: Exception) {
+                                Log.e("CameraPreview", "Fallback session failed", e)
+                            }
+                        }
+                    }
+
+                    override fun onClosed(session: CameraCaptureSession) {
+                        if (captureSession == session) captureSession = null
+                    }
+                },
+                bgHandler
+            )
+        } catch (e: Exception) {
+            Log.e("CameraPreview", "Failed to start capture session", e)
+        }
+    }
+
+    fun stop() {
+        isStopped = true
+        try {
+            captureSession?.stopRepeating()
+            captureSession?.abortCaptures()
+            captureSession?.close()
+        } catch (e: Exception) {
+            // session already closed or invalid
+        }
+        captureSession = null
+
+        try {
+            cameraDevice?.close()
+        } catch (e: Exception) {
+            // camera device already closed
+        }
+        cameraDevice = null
+
+        synchronized(activeSurfaces) {
+            activeSurfaces.clear()
+        }
+
+        try {
+            handlerThread?.quitSafely()
+        } catch (e: Exception) {
+            // thread already ended
+        }
+        handlerThread = null
+        handler = null
+    }
+}
+
+/**
+ * Stereoscopic overlay framing for Mixed Reality mode.
+ * Shows center divider line and ocular lens alignments for MR headset passthrough.
+ */
+@Composable
+fun MRStereoscopicCameraOverlay(modifier: Modifier = Modifier) {
+    Box(modifier = modifier.fillMaxSize()) {
+        // Vertical stereoscopic divider line for left and right eyes
         Box(
             modifier = Modifier
+                .width(2.dp)
                 .fillMaxHeight()
-                .padding(vertical = 40.dp)
+                .align(Alignment.Center)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            Color(0xFF00E5FF).copy(alpha = 0.6f),
+                            Color(0xFF00E5FF),
+                            Color(0xFF00E5FF).copy(alpha = 0.6f),
+                            Color.Transparent
+                        )
+                    )
+                )
         )
 
-        // Right Eye Camera Feed
-        Box(
+        // Alignment tick marks on center divider
+        Canvas(
             modifier = Modifier
-                .weight(1f)
+                .width(24.dp)
                 .fillMaxHeight()
+                .align(Alignment.Center)
         ) {
-            AndroidView(
-                factory = { ctx ->
-                    TextureView(ctx).apply {
-                        surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                            override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
-                                rightSurfaceTexture = st
-                            }
-                            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
-                            override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
-                                rightSurfaceTexture = null
-                                return true
-                            }
-                            override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+            val midY = size.height / 2f
+            for (i in -4..4) {
+                val y = midY + i * 24.dp.toPx()
+                val tickWidth = if (i == 0) 18.dp.toPx() else 10.dp.toPx()
+                drawLine(
+                    color = Color(0xFF00E5FF).copy(alpha = if (i == 0) 0.8f else 0.4f),
+                    start = Offset((size.width - tickWidth) / 2f, y),
+                    end = Offset((size.width + tickWidth) / 2f, y),
+                    strokeWidth = 1.5f
+                )
+            }
         }
-    }
-}
-
-/**
- * Starts Camera2 capture session feeding into the provided surfaces.
- */
-@SuppressLint("MissingPermission")
-private fun startCameraPreview(context: Context, surfaces: List<Surface>) {
-    try {
-        val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return
-        val cameraIdList = cameraManager.cameraIdList
-        if (cameraIdList.isEmpty()) return
-
-        // Find back camera
-        val cameraId = cameraIdList.firstOrNull { id ->
-            val characteristics = cameraManager.getCameraCharacteristics(id)
-            val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
-            facing == CameraCharacteristics.LENS_FACING_BACK
-        } ?: cameraIdList.first()
-
-        val thread = HandlerThread("CameraPreviewThread").apply { start() }
-        val handler = Handler(thread.looper)
-
-        cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
-            override fun onOpened(camera: CameraDevice) {
-                try {
-                    val previewRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-                    surfaces.forEach { surface ->
-                        if (surface.isValid) {
-                            previewRequestBuilder.addTarget(surface)
-                        }
-                    }
-
-                    camera.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
-                        override fun onConfigured(session: CameraCaptureSession) {
-                            try {
-                                previewRequestBuilder.set(
-                                    CaptureRequest.CONTROL_AF_MODE,
-                                    CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
-                                )
-                                session.setRepeatingRequest(previewRequestBuilder.build(), null, handler)
-                            } catch (e: Exception) {
-                                Log.e("CameraPreview", "Failed to start repeating request", e)
-                            }
-                        }
-
-                        override fun onConfigureFailed(session: CameraCaptureSession) {
-                            Log.e("CameraPreview", "Camera capture session configuration failed")
-                        }
-                    }, handler)
-                } catch (e: Exception) {
-                    Log.e("CameraPreview", "Failed to create capture session", e)
-                }
-            }
-
-            override fun onDisconnected(camera: CameraDevice) {
-                camera.close()
-            }
-
-            override fun onError(camera: CameraDevice, error: Int) {
-                camera.close()
-            }
-        }, handler)
-    } catch (e: Exception) {
-        Log.e("CameraPreview", "Camera setup error", e)
     }
 }
 
@@ -359,6 +547,17 @@ fun SpatialCameraFallback(
                     strokeWidth = 1f
                 )
             }
+        }
+
+        // Center line if MR mode
+        if (isMR) {
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .fillMaxHeight()
+                    .align(Alignment.Center)
+                    .background(Color(0xFF00E5FF).copy(alpha = 0.3f))
+            )
         }
 
         Column(

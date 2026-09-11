@@ -34,6 +34,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import io.github.sceneview.rememberEngine
+import io.github.sceneview.rememberMaterialLoader
+import io.github.sceneview.rememberModelLoader
 import io.github.sceneview.sample.model.AppMode
 import io.github.sceneview.sample.model.DefaultPresets
 import io.github.sceneview.sample.model.ModelPresetType
@@ -63,6 +66,11 @@ class MainActivity : ComponentActivity() {
 fun MixedRealityApp() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+
+    // Shared unified Filament engine across mode changes to prevent duplicate EGL contexts
+    val engine = rememberEngine()
+    val modelLoader = rememberModelLoader(engine)
+    val materialLoader = rememberMaterialLoader(engine)
 
     var selectedMode by remember { mutableStateOf(AppMode.OBJECT) }
     var currentModel by remember { mutableStateOf<SpatialModel?>(DefaultPresets.first()) }
@@ -135,6 +143,9 @@ fun MixedRealityApp() {
                     AppMode.OBJECT -> {
                         ObjectModeView(
                             model = currentModel,
+                            engine = engine,
+                            modelLoader = modelLoader,
+                            materialLoader = materialLoader,
                             modifier = Modifier.fillMaxSize()
                         )
                     }
@@ -149,6 +160,9 @@ fun MixedRealityApp() {
                             onClearAnchors = {
                                 placedAnchors.clear()
                             },
+                            engine = engine,
+                            modelLoader = modelLoader,
+                            materialLoader = materialLoader,
                             modifier = Modifier.fillMaxSize()
                         )
                     }

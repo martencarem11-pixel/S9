@@ -18,40 +18,33 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Sensors
-import androidx.compose.material.icons.filled.ViewInAr
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.android.filament.Engine
 import com.google.android.filament.gltfio.FilamentInstance
 import dev.romainguy.kotlin.math.Float3
 import io.github.sceneview.SceneView
 import io.github.sceneview.SurfaceType
 import io.github.sceneview.loaders.MaterialLoader
 import io.github.sceneview.loaders.ModelLoader
+import io.github.sceneview.node.CubeNode
+import io.github.sceneview.node.CylinderNode
+import io.github.sceneview.node.ModelNode
+import io.github.sceneview.node.SphereNode
+import io.github.sceneview.node.TorusNode
 import io.github.sceneview.rememberCameraManipulator
 import io.github.sceneview.rememberEngine
 import io.github.sceneview.rememberMaterialLoader
@@ -76,6 +69,9 @@ fun ARMRSceneView(
     placedAnchors: List<PlacedAnchor>,
     onAddAnchor: (PlacedAnchor) -> Unit,
     onClearAnchors: () -> Unit,
+    engine: Engine = rememberEngine(),
+    modelLoader: ModelLoader = rememberModelLoader(engine),
+    materialLoader: MaterialLoader = rememberMaterialLoader(engine),
     modifier: Modifier = Modifier
 ) {
     val isMR = (mode == AppMode.MR)
@@ -99,6 +95,9 @@ fun ARMRSceneView(
                 model = activeModel,
                 placedAnchors = placedAnchors,
                 onAddAnchor = onAddAnchor,
+                engine = engine,
+                modelLoader = modelLoader,
+                materialLoader = materialLoader,
                 modifier = Modifier.fillMaxSize()
             )
         } else {
@@ -107,26 +106,10 @@ fun ARMRSceneView(
                 model = activeModel,
                 placedAnchors = placedAnchors,
                 onAddAnchor = onAddAnchor,
+                engine = engine,
+                modelLoader = modelLoader,
+                materialLoader = materialLoader,
                 modifier = Modifier.fillMaxSize()
-            )
-        }
-
-        // 3. Status and Telemetry HUD Overlays
-        if (isMR) {
-            MRTelemetryHUD(
-                anchorCount = placedAnchors.size,
-                isModelLoaded = (activeModel != null),
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(start = 16.dp, top = 80.dp)
-            )
-        } else {
-            ARSurfacePrompt(
-                anchorCount = placedAnchors.size,
-                isModelLoaded = (activeModel != null),
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(start = 16.dp, top = 80.dp)
             )
         }
     }
@@ -140,11 +123,11 @@ fun SingleARScene(
     model: SpatialModel?,
     placedAnchors: List<PlacedAnchor>,
     onAddAnchor: (PlacedAnchor) -> Unit,
+    engine: Engine,
+    modelLoader: ModelLoader,
+    materialLoader: MaterialLoader,
     modifier: Modifier = Modifier
 ) {
-    val engine = rememberEngine()
-    val modelLoader = rememberModelLoader(engine)
-    val materialLoader = rememberMaterialLoader(engine)
     val cameraManipulator = rememberCameraManipulator()
 
     val customInstance = remember(model?.customFilePath, modelLoader) {
@@ -180,7 +163,7 @@ fun SingleARScene(
                         }
                     }
                 },
-            surfaceType = SurfaceType.TextureSurface,
+            surfaceType = SurfaceType.Surface,
             isOpaque = false,
             engine = engine,
             modelLoader = modelLoader,
@@ -218,74 +201,19 @@ fun SingleARScene(
 
 /**
  * Stereoscopic Mixed Reality Scene (Double Camera, Double Model - SBS).
+ * Renders both Left Eye and Right Eye stereoscopic models inside a unified single SceneView
+ * to prevent duplicate Filament engine conflicts and EGL attribute errors.
  */
 @Composable
 fun StereoscopicMRScene(
     model: SpatialModel?,
     placedAnchors: List<PlacedAnchor>,
     onAddAnchor: (PlacedAnchor) -> Unit,
+    engine: Engine,
+    modelLoader: ModelLoader,
+    materialLoader: MaterialLoader,
     modifier: Modifier = Modifier
 ) {
-    Row(modifier = modifier.fillMaxSize()) {
-        // Left Eye 3D Viewport
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .testTag("mr_left_eye")
-        ) {
-            EyeViewport(
-                eyeLabel = "L",
-                eyeOffset = -0.04f,
-                model = model,
-                placedAnchors = placedAnchors,
-                onAddAnchor = onAddAnchor,
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-
-        // Center Stereoscopic Divider Line
-        Box(
-            modifier = Modifier
-                .width(2.dp)
-                .fillMaxHeight()
-                .background(Color(0xFF00E5FF).copy(alpha = 0.4f))
-        )
-
-        // Right Eye 3D Viewport
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .testTag("mr_right_eye")
-        ) {
-            EyeViewport(
-                eyeLabel = "R",
-                eyeOffset = 0.04f,
-                model = model,
-                placedAnchors = placedAnchors,
-                onAddAnchor = onAddAnchor,
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-    }
-}
-
-/**
- * Single eye viewport inside the MR stereoscopic view.
- */
-@Composable
-fun EyeViewport(
-    eyeLabel: String,
-    eyeOffset: Float,
-    model: SpatialModel?,
-    placedAnchors: List<PlacedAnchor>,
-    onAddAnchor: (PlacedAnchor) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val engine = rememberEngine()
-    val modelLoader = rememberModelLoader(engine)
-    val materialLoader = rememberMaterialLoader(engine)
     val cameraManipulator = rememberCameraManipulator()
 
     val customInstance = remember(model?.customFilePath, modelLoader) {
@@ -303,25 +231,29 @@ fun EyeViewport(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
+        // Single unified SceneView rendering both Left Eye and Right Eye stereoscopic models
         SceneView(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(model) {
                     detectTapGestures { offset ->
                         if (model != null) {
+                            val isLeftHalf = offset.x < size.width / 2f
+                            val normalizedX = if (isLeftHalf) {
+                                ((offset.x / (size.width / 2f)) - 0.5f) * 0.4f
+                            } else {
+                                (((offset.x - size.width / 2f) / (size.width / 2f)) - 0.5f) * 0.4f
+                            }
+                            val normalizedY = -(offset.y / size.height - 0.5f) * 0.5f
                             val newAnchor = PlacedAnchor(
-                                position = Float3(
-                                    (offset.x / size.width - 0.5f) * 0.6f + eyeOffset,
-                                    -(offset.y / size.height - 0.5f) * 0.6f,
-                                    -0.5f
-                                ),
+                                position = Float3(normalizedX, normalizedY, -0.6f),
                                 model = model
                             )
                             onAddAnchor(newAnchor)
                         }
                     }
                 },
-            surfaceType = SurfaceType.TextureSurface,
+            surfaceType = SurfaceType.Surface,
             isOpaque = false,
             engine = engine,
             modelLoader = modelLoader,
@@ -329,48 +261,112 @@ fun EyeViewport(
             cameraManipulator = cameraManipulator
         ) {
             if (model != null) {
+                val leftOffset = -0.32f
+                val rightOffset = 0.32f
+
                 if (placedAnchors.isEmpty()) {
+                    // Left Eye Model
                     RenderModelItem(
                         model = model,
                         customInstance = customInstance,
                         materialLoader = materialLoader,
-                        offsetPosition = Float3(eyeOffset, 0f, 0f)
+                        offsetPosition = Float3(leftOffset, 0f, 0f)
+                    )
+                    // Right Eye Model (with stereoscopic parallax)
+                    RenderModelItem(
+                        model = model,
+                        customInstance = null,
+                        materialLoader = materialLoader,
+                        offsetPosition = Float3(rightOffset, 0f, 0f)
                     )
                 } else {
                     placedAnchors.forEach { anchor ->
+                        // Left Eye anchor
                         RenderModelItem(
                             model = anchor.model,
                             customInstance = null,
                             materialLoader = materialLoader,
-                            offsetPosition = Float3(anchor.position.x + eyeOffset, anchor.position.y, anchor.position.z)
+                            offsetPosition = Float3(anchor.position.x + leftOffset, anchor.position.y, anchor.position.z)
+                        )
+                        // Right Eye anchor
+                        RenderModelItem(
+                            model = anchor.model,
+                            customInstance = null,
+                            materialLoader = materialLoader,
+                            offsetPosition = Float3(anchor.position.x + rightOffset, anchor.position.y, anchor.position.z)
                         )
                     }
                 }
             }
         }
 
-        // Eye-specific reticle
-        SpatialReticle(
-            isMR = true,
-            modifier = Modifier.align(Alignment.Center)
-        )
+        // Stereoscopic HUD Overlays: Left Eye & Right Eye Reticles and labels
+        Row(modifier = Modifier.fillMaxSize()) {
+            // Left Eye Container
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .testTag("mr_left_eye")
+            ) {
+                SpatialReticle(
+                    isMR = true,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 90.dp),
+                    shape = CircleShape,
+                    color = Color(0xFF16171B).copy(alpha = 0.75f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.5f))
+                ) {
+                    Text(
+                        text = "EYE L",
+                        color = Color(0xFF00E5FF),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+            }
 
-        // Eye identifier badge
-        Surface(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 90.dp),
-            shape = CircleShape,
-            color = Color(0xFF16171B).copy(alpha = 0.75f),
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.5f))
-        ) {
-            Text(
-                text = "EYE $eyeLabel",
-                color = Color(0xFF00E5FF),
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+            // Center Stereoscopic Divider Line
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .fillMaxHeight()
+                    .background(Color(0xFF00E5FF).copy(alpha = 0.4f))
             )
+
+            // Right Eye Container
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .testTag("mr_right_eye")
+            ) {
+                SpatialReticle(
+                    isMR = true,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 90.dp),
+                    shape = CircleShape,
+                    color = Color(0xFF16171B).copy(alpha = 0.75f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.5f))
+                ) {
+                    Text(
+                        text = "EYE R",
+                        color = Color(0xFF00E5FF),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+            }
         }
     }
 }

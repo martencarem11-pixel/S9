@@ -47,6 +47,7 @@ import com.google.android.filament.Engine
 import com.google.android.filament.gltfio.FilamentInstance
 import dev.romainguy.kotlin.math.Float3
 import io.github.sceneview.SceneView
+import io.github.sceneview.SurfaceType
 import io.github.sceneview.loaders.MaterialLoader
 import io.github.sceneview.loaders.ModelLoader
 import io.github.sceneview.rememberCameraManipulator
@@ -65,11 +66,11 @@ import java.io.File
 @Composable
 fun ObjectModeView(
     model: SpatialModel?,
+    engine: Engine = rememberEngine(),
+    modelLoader: ModelLoader = rememberModelLoader(engine),
+    materialLoader: MaterialLoader = rememberMaterialLoader(engine),
     modifier: Modifier = Modifier
 ) {
-    val engine = rememberEngine()
-    val modelLoader = rememberModelLoader(engine)
-    val materialLoader = rememberMaterialLoader(engine)
     val cameraManipulator = rememberCameraManipulator()
 
     var autoRotate by remember { mutableStateOf(false) }
@@ -134,6 +135,7 @@ fun ObjectModeView(
         // Native SceneView 3D viewport
         SceneView(
             modifier = Modifier.fillMaxSize(),
+            surfaceType = SurfaceType.Surface,
             engine = engine,
             modelLoader = modelLoader,
             materialLoader = materialLoader,
@@ -315,40 +317,6 @@ fun ObjectModeView(
 
         // Model inspection HUD (when model is active)
         if (model != null) {
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(start = 16.dp, top = 80.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = Color(0xFF16171B).copy(alpha = 0.85f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2A2C35))
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF00E5FF))
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = model.name,
-                            color = Color.White,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Text(
-                        text = "Touch to orbit • Pinch to zoom",
-                        color = Color(0xFF7E8086),
-                        fontSize = 11.sp
-                    )
-                }
-            }
-
             // Quick auto-rotate toggle button
             Surface(
                 modifier = Modifier
